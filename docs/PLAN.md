@@ -329,9 +329,8 @@ expenses-app/
 
 ## 7. Ordered tasks, each with its verification
 
-**Status: 14 of 15 complete.** The only open row is the GitHub push (this session). Row 14, the
-on-device QR check, was **confirmed by the user on real hardware** — the app opened in Expo Go
-and looked correct. Every other row records what its check actually returned.
+**Status: 15 of 15 complete.** Device check confirmed by the user on real hardware; pushed to
+`github.com/Majeekmedia/expenses-app` at `445564e`. Every row records what its check returned.
 
 | # | Task | Verification | Status |
 |---|---|---|---|
@@ -348,7 +347,7 @@ and looked correct. Every other row records what its check actually returned.
 | 10 | Colour system, both schemes | `verify-contrast.mts` — both schemes ≥4.5:1 and they differ | ✅ 73/73 — **caught `textMuted` at 3.79:1** |
 | 11 | Screenshots | `capture-screenshots.js` at 390px: 6 PNGs, **6 distinct SHA256**, target geometrically inside the viewport | ✅ 6/6 distinct; `02` retaken to clear the focus ring |
 | 12 | README + NOTES + verify-docs | `verify-docs.mjs` passes; every embedded image exists | ✅ 12/12 |
-| 13 | Push to GitHub | retry loop, 8 attempts; `git rev-parse HEAD` equals `origin/main`; 3 raw screenshot URLs return HTTP 200 | ⬜ **not yet — branch is still `master` with no remote** |
+| 13 | Push to GitHub | retry loop, 8 attempts; `git rev-parse HEAD` equals `origin/main`; 3 raw screenshot URLs return HTTP 200 | ✅ pushed on attempt 1; remote HEAD `445564e` matches local; 3/3 raw URLs HTTP 200 |
 | 14 | Open in Expo Go on the phone via QR | App loads, SQLite persists across a reload, `Intl` matches the browser | ✅ **confirmed by the user on real hardware** — opened in Expo Go and looked good |
 
 ---
