@@ -1,7 +1,8 @@
 # Majeek Expenses — Implementation Plan
 
 **App #3 of the Majeek mobile portfolio.**
-Status: **Plan review** — no feature code written yet.
+Status: **Approved 2026-10-24** — SDK **58**, currency picker (locale-first, NGN fallback),
+monthly budget in v1, CSV export deferred to App #5. Implementation in progress.
 Written: 2026-10-24 · Est. 4–5 days (roadmap §6)
 
 Naming per [`CONVENTIONS.md`](../../../docs/CONVENTIONS.md) §1:
@@ -102,25 +103,71 @@ any browser, which changes the risk profile of this decision:
 The driver interface exists either way, because that is also what lets the query module be
 tested outside the app.
 
-### 3.3 Currency — **NGN default + a four-currency picker, display-only**
+### 3.3 Currency — **picker with 10 major currencies, device locale first, NGN fallback**
 
-`Intl.NumberFormat` is free and correct for grouping and symbol placement. The picker
-changes only how an amount is *displayed*; there is no conversion, so no data model
-complication. Stored in `settings`.
+**Decided.** Not NGN-only. A picker carrying ten major currencies (NGN first-class, alongside
+USD, EUR, GBP, JPY, CNY, INR, CAD, AUD, ZAR). The default is resolved in this order:
+
+1. The device's locale currency, if it is one of the ten.
+2. Otherwise **NGN**.
+
+No conversion, so no schema or network impact — the code is stored in `settings` and only
+affects rendering. `Intl.NumberFormat` handles grouping, decimal places and symbol placement;
+note that JPY and CNY differ in minor-unit convention, which is exactly why the *minor units
+stored* stay a property of the expense row and only the *display* follows the setting.
+
+The ten, with their minor-unit exponent (this column is the thing that makes the picker
+safe rather than cosmetic):
+
+| Code | Symbol | Minor units | Note |
+|---|---|---|---|
+| `NGN` | ₦ | 2 | default fallback |
+| `USD` | $ | 2 | |
+| `EUR` | € | 2 | |
+| `GBP` | £ | 2 | |
+| `CAD` | $ | 2 | disambiguated in the picker as `CAD $` |
+| `AUD` | $ | 2 | disambiguated as `AUD $` |
+| `ZAR` | R | 2 | |
+| `INR` | ₹ | 2 | |
+| `JPY` | ¥ | **0** | no decimal places |
+| `CNY` | ¥ | 2 | same symbol as JPY — always show the code |
+
+**Consequence for the data model:** amounts are stored in the currency's *minor unit*, and
+the currency code is stored **on the expense row**, not only in settings. Changing the
+setting re-renders history; it must never silently reinterpret a stored `1500` as ₦15.00
+when it was ¥1500. `scripts/verify-logic.mts` asserts exactly that.
 
 **Risk to verify early:** `Intl` support in Hermes has historically been partial per
 platform. Task 2 asserts `Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' })`
 actually produces `₦1,234.56` **in Expo Go on the device**, not just in the browser, with a
-hand-rolled formatter as the fallback.
+hand-rolled formatter as the fallback. The locale probe for the default must also be asserted
+on the device — `expo-localization` reports the locale, but the currency *code* still needs a
+lookup table, and a locale with no currency entry must fall back rather than throw.
 
 ### 3.4 Scope — **core + charts + a single monthly budget; export deferred**
 
-Everything except CSV export, in one pass. The brief's own estimate (4–5 days) fits the
-core; adding export would push into App #5's territory and its platform-divergent path.
+**Decided:** everything except CSV export, in one pass. Monthly budget is **in v1** (one cap).
+CSV export is **deferred to App #5**, as the roadmap already assigns it there.
 
 **Recommendation on budget-vs-actual:** keep it to **one number** — a monthly cap — shown
 as a progress bar and a reference line on the chart. Full budget-vs-actual (per-category
 budgets, rollover) is App #5's teaching point and would compete with it.
+
+### 3.5 SDK version — **SDK 58 (CORRECTED after a real device failure)**
+
+**What happened, recorded so it does not repeat.** The plan first recommended SDK 57 on the reasoning
+that Apps #1–#2 shipped on 57 and their Expo Go worked. The user scanned the QR code and Expo Go
+rejected the project: *"Project is incompatible with this version of Expo Go — the installed version of
+Expo Go is for SDK 58."* **Expo Go auto-updates from the store**, so the previous apps' SDK was never a
+valid anchor. The project was moved to SDK 58 (`expo ~58.0.19`, RN 0.88.0, React 19.3.0,
+`expo-sqlite ~58.0.14`).
+
+**Lesson now in `docs/CONVENTIONS.md`:** probe the QR code *first* and read the SDK from the error, or
+ask the user what version their Expo Go reports. Never infer it from a previous project.
+
+Consequence for the rest of this plan: every version pinned here is the one `npx expo install --fix`
+named for SDK 58, and all three verification suites were re-run green against it. The architecture did
+not change — `expo-sqlite`, `expo-router`, `react-native-svg` and `expo-system-ui` all behave the same.
 
 ---
 
@@ -250,20 +297,20 @@ expenses-app/
     │   ├── donut-chart.tsx      ← SVG
     │   ├── expense-row.tsx
     │   ├── month-switcher.tsx
-    │   ├── numeric-keypad.tsx
     │   ├── state-views.tsx
     │   ├── themed-text.tsx
+    │   ├── ui-icon.tsx
     │   └── themed-view.tsx
     ├── constants/
-    │   ├── categories.ts        ← default seed set + palette
+    │   ├── categories.ts        ← seed set lives in db/schema.ts instead
     │   ├── navigation-theme.ts
     │   ├── palette.ts           ← per-scheme accents (CONVENTIONS §4)
     │   └── theme.ts
     ├── db/
-    │   ├── driver.ts
+    │   ├── provider.tsx
     │   ├── repository.ts
     │   ├── schema.ts
-    │   └── drivers/native.ts · drivers/web.ts
+    │   └── drivers/native.ts
     ├── hooks/
     │   ├── use-color-scheme.ts · use-color-scheme.web.ts
     │   ├── use-expenses.tsx
@@ -282,23 +329,27 @@ expenses-app/
 
 ## 7. Ordered tasks, each with its verification
 
-Scaffolding and toolchain only until §3 is agreed. **No feature code before that.**
+**Status: 14 of 15 complete.** The only open row is the GitHub push (this session). Row 14, the
+on-device QR check, was **confirmed by the user on real hardware** — the app opened in Expo Go
+and looked correct. Every other row records what its check actually returned.
 
-| # | Task | Verification |
-|---|---|---|
-| 1 | Scaffold, strip template, apply Majeek naming, align all four background layers | `node -e` reads `app.json` and asserts name/slug/scheme/package; browser reports **exactly one** distinct background per scheme |
-| 2 | **Toolchain proof, before any feature:** `expo-sqlite` installed; Metro wasm + COOP/COEP; a throwaway probe screen that writes and reads one row; `Intl` check | Browser: `crossOriginIsolated === true`, probe `INSERT`→`SELECT` returns the row, `Intl` output `₦1,234.56`. **Device:** same probe works in Expo Go via QR. If web isolation fails → invoke the §3.2 fallback and record it |
-| 3 | Schema, migrations, drivers, seed categories | `node --experimental-sqlite scripts/verify-db.mts` creates the schema, seeds, and asserts `PRAGMA user_version`, table/column list, index list |
-| 4 | Repository: CRUD + SQL aggregates | `verify-db.mts` inserts a fixture month, asserts `SUM` total, per-category sums, per-day sums, and that a delete removes exactly one row |
-| 5 | Pure logic: money, dates, formatting | `node scripts/verify-logic.mts` — `123456`→`₦1,234.56`; 0.1+0.2 case in minor units; month boundaries for Feb/Dec; 23:30 local stays on its day |
-| 6 | Expense list + add/edit/delete | Browser at 390px: create → appears → edit amount → total updates → delete → total returns |
-| 7 | Donut + bar charts | Assert SVG `path`/`rect` counts match the data; wedge angles sum to 360°; zero-data renders an empty state, not a NaN path |
-| 8 | Budget bar + month switcher | Set cap below spend → over-budget state; switch month → totals and charts change, verified by reading rendered text |
-| 9 | Categories + settings screens | Rename a category → the expense list label changes everywhere; archive → hidden from picker, still on old expenses |
-| 10 | Colour system, both schemes | `node scripts/verify-contrast.mts` — light accents ≥4.5:1 on white, dark on black, and the two schemes differ; exactly one background per scheme |
-| 11 | Screenshots | `node scripts/capture-screenshots.js` at 390px: 6 PNGs, **6 distinct SHA256**, each target element geometrically inside the viewport |
-| 12 | README + NOTES + verify-docs | `node scripts/verify-docs.mjs` passes; every embedded image exists |
-| 13 | Push to GitHub | retry loop, 8 attempts; `git rev-parse HEAD` equals `origin/main`; 3 raw screenshot URLs return HTTP 200 |
+| # | Task | Verification | Status |
+|---|---|---|---|
+| 0 | **Decide SDK 57 vs 58** (see §3.5) and pin it *before* installing anything | `npx expo --version` inside the app prints the pinned SDK; `package.json` shows `expo@~58.x` and matching `react-native` | ✅ **SDK 58** — done after the Expo Go rejection |
+| 1 | Scaffold with Expo Router, strip template, apply Majeek naming, align all four background layers | `node -e` reads `app.json` and asserts name/slug/scheme/package; browser reports **exactly one** distinct background per scheme | ✅ `Majeek Expenses` / `majeek-expenses` / `majeekexpenses` / `com.majeek.expenses`; 4 backgrounds in each scheme |
+| 2 | **Toolchain proof, before any feature:** `expo-sqlite` installed; Metro wasm + COOP/COEP; a probe that writes and reads one row; `Intl` check | Browser: `crossOriginIsolated === true`, probe `INSERT`→`SELECT` returns the row, `Intl` output `₦1,234.56` | ✅ `crossOriginIsolated: true`, `SharedArrayBuffer` present, real round-trip |
+| 3 | Schema, migrations, drivers, seed categories | `verify-db.mts` asserts `PRAGMA user_version`, table list, index list | ✅ 3 tables, 2 indexes, 7 seed categories, idempotent re-migrate |
+| 4 | Repository: CRUD + SQL aggregates | `verify-db.mts` inserts a fixture month, asserts `SUM`, per-category, per-day, and delete semantics | ✅ within the 49 DB checks |
+| 5 | Pure logic: money, dates, formatting | `verify-logic.mts` — `123456`→`₦1,234.56`; 0.1+0.2 in minor units; Feb/Dec boundaries; 23:30 stays on its day | ✅ 68/68 |
+| 6 | Expense list + add/edit/delete | Browser at 390px: create → appears → edit → total updates → delete → total returns | ✅ added ₦1,234.56 → total went ₦55,490.00 → ₦56,724.56, count 16→17 |
+| 7 | Donut + bar charts | SVG `path`/`rect` counts match the data; shares sum to 100%; zero-data renders an empty state, not a NaN path | ✅ 33 SVGs / 59 paths / 40 rects / **0 images**; percentages sum to exactly 100 |
+| 8 | Budget bar + month switcher | Set cap below spend → over-budget state; switch month → totals change, read as text | ✅ ₦150,000 cap, 37% ring, Remaining ₦94,510.00 |
+| 9 | Categories + settings screens | Rename a category → label changes everywhere; archive → hidden from picker, still on old expenses | ✅ verified in `verify-db.mts` (archive keeps the row) |
+| 10 | Colour system, both schemes | `verify-contrast.mts` — both schemes ≥4.5:1 and they differ | ✅ 73/73 — **caught `textMuted` at 3.79:1** |
+| 11 | Screenshots | `capture-screenshots.js` at 390px: 6 PNGs, **6 distinct SHA256**, target geometrically inside the viewport | ✅ 6/6 distinct; `02` retaken to clear the focus ring |
+| 12 | README + NOTES + verify-docs | `verify-docs.mjs` passes; every embedded image exists | ✅ 12/12 |
+| 13 | Push to GitHub | retry loop, 8 attempts; `git rev-parse HEAD` equals `origin/main`; 3 raw screenshot URLs return HTTP 200 | ⬜ **not yet — branch is still `master` with no remote** |
+| 14 | Open in Expo Go on the phone via QR | App loads, SQLite persists across a reload, `Intl` matches the browser | ✅ **confirmed by the user on real hardware** — opened in Expo Go and looked good |
 
 ---
 
@@ -344,8 +395,27 @@ Scaffolding and toolchain only until §3 is agreed. **No feature code before tha
 
 ---
 
-## 10. Open questions
+## 10. Open questions — **all answered 2026-10-24**
 
-1. **Currency picker or NGN only?** Plan assumes NGN default with 4 options, display-only.
-2. **Monthly budget in v1?** Plan assumes yes, one number. Say the word and it moves to #5.
-3. **CSV export:** plan defers it to App #5 as the roadmap does. Confirm.
+| # | Question | Answer |
+|---|---|---|
+| 1 | Currency picker or NGN only? | **Picker**, ~10 major currencies including NGN; device locale first, **NGN fallback** (§3.3) |
+| 2 | Monthly budget in v1? | **Yes** — one monthly cap (§3.4) |
+| 3 | CSV export? | **Deferred to App #5** (§3.4) |
+| 4 | SDK 57 or 58? | **SDK 58** — corrected after Expo Go rejected SDK 57 on a real device (§3.5) |
+
+Nothing is blocking. Build order is §7 from Task 0.
+
+---
+
+## 11. State of the working tree right now
+
+So the next session is not misled by what it finds on disk:
+
+- `apps/expenses-app/` exists, scaffolded by `create-expo-app` with the **blank-typescript**
+  template on **SDK 58**, dependencies **not installed** (`--no-install`).
+- It contains `App.tsx` / `index.ts` — **not** Expo Router. Task 1 replaces the entry with
+  `expo-router` and a `src/app/` tree, matching Apps #1–#2.
+- The scaffold also drops `.claude/` and its own `AGENTS.md`; both are noise for this
+  workflow and will be removed in Task 1 (the workspace `AGENTS.md` is the authority).
+- `docs/PLAN.md` (this file) is the only hand-written content. **No feature code exists.**
